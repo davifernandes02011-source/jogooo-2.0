@@ -1,0 +1,121 @@
+name: Gerar APK e IPA
+
+# Roda sozinho toda vez que voce salva algo no repositorio,
+# e tambem quando voce clica no botao "Run workflow" na aba Actions.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  FLUTTER_VERSION: "3.47.x"
+  APP_LABEL: "pro"
+  BUNDLE_ORG: "com.borajogar"
+  PROJECT_NAME: "bora_jogar"
+
+jobs:
+  # ----------------------------------------------------------
+  # ANDROID -> arquivo .apk (instala direto no celular)
+  # ----------------------------------------------------------
+  android:
+    name: APK (Android)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Baixar o codigo do repositorio
+        uses: actions/checkout@v4
+
+      - name: Instalar o Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Instalar o Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Criar a pasta android/ do projeto
+        # O DartPad so tem o main.dart. Este comando gera o resto do projeto
+        # Android. Em seguida o "git checkout" devolve os SEUS arquivos,
+        # caso o comando tenha sobrescrito algum.
+        run: |
+          flutter create --platforms=android \
+            --project-name ${{ env.PROJECT_NAME }} \
+            --org ${{ env.BUNDLE_ORG }} .
+          git checkout -- .
+          rm -rf test
+
+      - name: Ajustar o nome que aparece embaixo do icone
+        run: |
+          sed -i 's|android:label="[^"]*"|android:label="${{ env.APP_LABEL }}"|' \
+            android/app/src/main/AndroidManifest.xml
+
+      - name: Baixar as dependencias
+        run: flutter pub get
+
+      - name: Compilar o APK
+        run: flutter build apk --release
+
+      - name: Disponibilizar o APK para download
+        uses: actions/upload-artifact@v4
+        with:
+          name: pro-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+
+  # ----------------------------------------------------------
+  # IOS -> arquivo .ipa SEM ASSINATURA
+  # Leia o README: um .ipa sem assinatura NAO instala como um app
+  # normal do iPhone. Precisa de sideload (AltStore / Sideloadly).
+  # ----------------------------------------------------------
+  ios:
+    name: IPA (iOS, sem assinatura)
+    runs-on: macos-latest
+    steps:
+      - name: Baixar o codigo do repositorio
+        uses: actions/checkout@v4
+
+      - name: Instalar o Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Criar a pasta ios/ do projeto
+        run: |
+          flutter create --platforms=ios \
+            --project-name ${{ env.PROJECT_NAME }} \
+            --org ${{ env.BUNDLE_ORG }} .
+          git checkout -- .
+          rm -rf test
+
+      - name: Ajustar o nome que aparece embaixo do icone
+        run: |
+          PLIST=ios/Runner/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName ${{ env.APP_LABEL }}" "$PLIST" 2>/dev/null \
+            || /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string ${{ env.APP_LABEL }}" "$PLIST" \
+            || true
+
+      - name: Baixar as dependencias
+        run: flutter pub get
+
+      - name: Compilar sem assinatura
+        run: flutter build ios --release --no-codesign
+
+      - name: Empacotar o resultado como .ipa
+        run: |
+          cd build/ios/iphoneos
+          mkdir -p Payload
+          mv Runner.app Payload/
+          zip -r -y bora-jogar.ipa Payload
+
+      - name: Disponibilizar o IPA para download
+        uses: actions/upload-artifact@v4
+        with:
+          name: bora-jogar-ipa
+          path: build/ios/iphoneos/bora-jogar.ipa
+          if-no-files-found: error
